@@ -34,6 +34,19 @@ type riscv =
   | Bltu of string * string * string
   | Bgeu of string * string * string
 
+
+(* ####### INPUT OUTPUT FROM FILE ######### *)
+
+(* ########## FRONT END PARSE ######### *)
+
+
+
+
+let main_parse = 
+  failwith "Unimplemented"
+
+(* ######### BACK END EVALUATION ############# *)
+
 let rec init_reg_file counter n_regs rf =
   if counter = n_regs then rf
   else
@@ -459,6 +472,11 @@ and eval_branch rs1 rs2 label expr_lst rf ram pc instr_lst op =
     eval expr_lst rf ram (pc + 4) instr_lst
   end
 
+let main_eval expr_lst table_a_only = 
+  let instr_lst = add_pc_to_instruction expr_lst 0 [] in
+  let pc = 0 in 
+  if table_a_only then eval_table_a expr_lst reg_file ram pc instr_lst 
+  else eval expr_lst reg_file ram pc instr_lst
 
 
 
