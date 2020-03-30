@@ -25,6 +25,8 @@ type riscv =
   | Sw of string * string * int
   | Lb of string * string * int
   | Sb of string * string * int
+
+(*
   | Jal of string * string (* First argument is the save register, second is the label location *)
   | Jalr of string * string * int (* first argument is save register, second is register for jump location, int is immediate offset *)
   | Beq of string * string * string (* Where the last string is the label location to jump to *)
@@ -33,6 +35,7 @@ type riscv =
   | Bge of string * string * string
   | Bltu of string * string * string
   | Bgeu of string * string * string
+*)
 
 let rec init_reg_file counter n_regs rf =
   if counter = n_regs then rf
@@ -53,24 +56,6 @@ let sltiu_helper =
 let xori_helper = 
   fun a b -> if b = -1 then lnot a else a lxor b
 
-let beq = 
-  fun a b -> a = b 
-
-let bne = 
-  fun a b -> a <> b
-
-let bge = 
-  fun a b -> a >= b
-
-let bgeu = 
-  fun a b -> abs a >= abs b
-
-let blt = 
-  fun a b -> a < b 
-
-let bltu = 
-  fun a b -> abs a < abs b
-
 (* In Little Endian order *)
 let rec dec_to_base_2 acc dec = 
   if dec < 0 then failwith "Base 10 number must be non-negative"
@@ -79,16 +64,6 @@ let rec dec_to_base_2 acc dec =
     let rem = dec mod 2 in 
     if dec' = 0 then List.rev (dec :: acc)
     else dec_to_base_2 (rem :: acc) dec'
-
-let rec pad_two_32_helper lst len = 
-  if len = 0 then lst 
-  else pad_two_32_helper (1 :: lst) (len - 1)
-
-(** Requires: [lst] is in little endian order *)
-let pad_two_32 lst = 
-  let len = List.length lst in 
-  let rem = 32 - len in 
-  List.rev (pad_two_32_helper (List.rev lst) rem)
 
 let rec pad_one_32_helper lst len = 
   if len = 0 then lst 
@@ -167,22 +142,9 @@ let split_32_into_4_groups lst =
   let lst4, rem4 = take_first_n rem3 [] [] 8 in 
   (lst1, lst2, lst3, lst4)
 
-let c_2_TO_32 = 
-  let twos_list = pad_two_32 [] in 
-  List.fold_left ( * ) 1 twos_list
-
 (* takes in Little endian, returns base 10 *)
-(* raises non empty argument with AssertionError *)
 let convert_to_base_10 lst = 
-  assert (lst <> []);
-  if lst |> List.rev |> List.hd = 1 then 
-    let rev_tail = lst |> List.rev |> List.tl in 
-    let positive_part = 
-      List.fold_left (fun acc elt -> 2 * acc + elt) 0 rev_tail in 
-    let negative_part = -1 * c_2_TO_32 in 
-    positive_part + negative_part (* 2's complement negative *)
-  else
-    List.fold_left (fun acc elt -> 2 * acc + elt) 0 (List.rev lst)
+  List.fold_left (fun acc elt -> 2 * acc + elt) 0 (List.rev lst)
 
 let c_ZERO_BASE_2 = [0; 0; 0; 0; 0; 0; 0; 0]
 
@@ -239,21 +201,9 @@ let rec jump_to_label instr_list label_name =
       | _ -> jump_to_label t label_name
     end 
 
-let rec get_label_pc instr_list label_name = 
-  match instr_list with 
-  | [] -> failwith "The label you requested is not in the series of instructions you gave. Could not get PC. "
-  | (pc, h) :: t -> begin
-      match h with 
-      | Label name -> begin 
-          if name = label_name then pc 
-          else get_label_pc t label_name
-        end
-      | _ -> get_label_pc t label_name
-    end
-
 let rec jump_to_pc instr_list pc = 
   match instr_list with 
-  | [] -> failwith "The pc number you requested is not in the series of instructions you gave. Possibly, your PC was halfword aligned but not word aligned. The Jump failed. "
+  | [] -> failwith "The pc number you requested is not in the series of instructions you gave. The Jump failed. "
   | (num, _) :: t -> begin 
       if num = pc then instr_list 
       else jump_to_pc t pc
@@ -268,87 +218,77 @@ let mem_to_dec lst =
 let print_memory ram = 
   Hashtbl.iter (fun k v -> (k ^ " : " ^ string_of_int (mem_to_dec v)) |> print_endline; print_newline ()) ram
 
-let rec eval_table_a expr_lst rf ram pc instr_lst =
+let rec eval_table_a expr_lst rf ram pc =
   match expr_lst with 
   | [] -> print_endline "Finished interpretation"; ()
 
-  | Add (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (+); eval_table_a t rf ram (pc + 4) instr_lst
-  | Addi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (+); eval_table_a t rf ram (pc + 4) instr_lst
-  | Sub (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (-); eval_table_a t rf ram (pc + 4) instr_lst
+  | Add (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (+); eval_table_a t rf ram (pc + 4)
+  | Addi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (+); eval_table_a t rf ram (pc + 4)
+  | Sub (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (-); eval_table_a t rf ram (pc + 4)
 
-  | And (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (land); eval_table_a t rf ram (pc + 4) instr_lst
-  | Andi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (land); eval_table_a t rf ram (pc + 4) instr_lst
-  | Or (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lor); eval_table_a t rf ram (pc + 4) instr_lst
-  | Ori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lor); eval_table_a t rf ram (pc + 4) instr_lst
-  | Xor (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lxor); eval_table_a t rf ram (pc + 4) instr_lst
-  | Xori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (xori_helper); eval_table_a t rf ram (pc + 4) instr_lst
+  | And (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (land); eval_table_a t rf ram (pc + 4)
+  | Andi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (land); eval_table_a t rf ram (pc + 4)
+  | Or (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lor); eval_table_a t rf ram (pc + 4)
+  | Ori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lor); eval_table_a t rf ram (pc + 4)
+  | Xor (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lxor); eval_table_a t rf ram (pc + 4)
+  | Xori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (xori_helper); eval_table_a t rf ram (pc + 4)
 
-  | Sll (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsl); eval_table_a t rf ram (pc + 4) instr_lst
-  | Slli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsl); eval_table_a t rf ram (pc + 4) instr_lst
-  | Srl (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsr); eval_table_a t rf ram (pc + 4) instr_lst
-  | Srli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsr); eval_table_a t rf ram (pc + 4) instr_lst
-  | Sra (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (asr); eval_table_a t rf ram (pc + 4) instr_lst
-  | Srai (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (asr); eval_table_a t rf ram (pc + 4) instr_lst
+  | Sll (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsl); eval_table_a t rf ram (pc + 4)
+  | Slli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsl); eval_table_a t rf ram (pc + 4)
+  | Srl (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsr); eval_table_a t rf ram (pc + 4)
+  | Srli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsr); eval_table_a t rf ram (pc + 4)
+  | Sra (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (asr); eval_table_a t rf ram (pc + 4)
+  | Srai (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (asr); eval_table_a t rf ram (pc + 4)
 
-  | Lui (rd, imm) :: t -> eval_lui rd imm rf ram; eval_table_a t rf ram (pc + 4) instr_lst
-  | Auipc (rd, imm) :: t -> eval_auipc rd imm pc rf ram; eval_table_a t rf ram (pc + 4) instr_lst
+  | Lui (rd, imm) :: t -> eval_lui rd imm rf ram; eval_table_a t rf ram (pc + 4)
+  | Auipc (rd, imm) :: t -> eval_auipc rd imm pc rf ram; eval_table_a t rf ram (pc + 4)
 
-  | Slt (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (slt_helper); eval_table_a t rf ram (pc + 4) instr_lst
-  | Slti (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (slt_helper); eval_table_a t rf ram (pc + 4) instr_lst
-  | Sltu (rd, rs1, rs2) :: t -> eval_sltu rd rs1 rs2 rf ram; eval_table_a t rf ram (pc + 4) instr_lst
-  | Sltiu (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (sltiu_helper); eval_table_a t rf ram (pc + 4) instr_lst
+  | Slt (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (slt_helper); eval_table_a t rf ram (pc + 4)
+  | Slti (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (slt_helper); eval_table_a t rf ram (pc + 4)
+  | Sltu (rd, rs1, rs2) :: t -> eval_sltu rd rs1 rs2 rf ram; eval_table_a t rf ram (pc + 4)
+  | Sltiu (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (sltiu_helper); eval_table_a t rf ram (pc + 4)
 
-  | Label (name) :: t -> eval_table_a t rf ram (pc + 4) instr_lst
+  | Label (name) :: t -> eval_table_a t rf ram (pc + 4)
 
-  | _ :: t -> print_endline "Not a Table A operation : Will Not Be Executed"; eval t rf ram (pc + 4) instr_lst
+  | _ :: t -> print_endline "Not a Table A operation : Will Not Be Executed"; eval t rf ram (pc + 4)
 
-and eval expr_lst rf ram pc instr_lst = 
+and eval expr_lst rf ram pc = 
   match expr_lst with 
   | [] -> print_endline "Finished interpretation"; ()
 
-  | Add (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (+); eval t rf ram (pc + 4) instr_lst
-  | Addi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (+); eval t rf ram (pc + 4) instr_lst
-  | Sub (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (-); eval t rf ram (pc + 4) instr_lst
+  | Add (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (+); eval t rf ram (pc + 4)
+  | Addi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (+); eval t rf ram (pc + 4)
+  | Sub (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (-); eval t rf ram (pc + 4)
 
-  | And (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (land); eval t rf ram (pc + 4) instr_lst
-  | Andi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (land); eval t rf ram (pc + 4) instr_lst
-  | Or (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lor); eval t rf ram (pc + 4) instr_lst
-  | Ori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lor); eval t rf ram (pc + 4) instr_lst
-  | Xor (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lxor); eval t rf ram (pc + 4) instr_lst
-  | Xori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lxor); eval t rf ram (pc + 4) instr_lst
+  | And (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (land); eval t rf ram (pc + 4)
+  | Andi (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (land); eval t rf ram (pc + 4)
+  | Or (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lor); eval t rf ram (pc + 4)
+  | Ori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lor); eval t rf ram (pc + 4)
+  | Xor (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lxor); eval t rf ram (pc + 4)
+  | Xori (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lxor); eval t rf ram (pc + 4)
 
-  | Sll (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsl); eval t rf ram (pc + 4) instr_lst
-  | Slli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsl); eval t rf ram (pc + 4) instr_lst
-  | Srl (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsr); eval t rf ram (pc + 4) instr_lst
-  | Srli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsr); eval t rf ram (pc + 4) instr_lst
-  | Sra (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (asr); eval t rf ram (pc + 4) instr_lst
-  | Srai (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (asr); eval t rf ram (pc + 4) instr_lst
+  | Sll (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsl); eval t rf ram (pc + 4)
+  | Slli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsl); eval t rf ram (pc + 4)
+  | Srl (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (lsr); eval t rf ram (pc + 4)
+  | Srli (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (lsr); eval t rf ram (pc + 4)
+  | Sra (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (asr); eval t rf ram (pc + 4)
+  | Srai (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (asr); eval t rf ram (pc + 4)
 
-  | Lui (rd, imm) :: t -> eval_lui rd imm rf ram; eval t rf ram (pc + 4) instr_lst
-  | Auipc (rd, imm) :: t -> eval_auipc rd imm pc rf ram; eval t rf ram (pc + 4) instr_lst
+  | Lui (rd, imm) :: t -> eval_lui rd imm rf ram; eval t rf ram (pc + 4)
+  | Auipc (rd, imm) :: t -> eval_auipc rd imm pc rf ram; eval t rf ram (pc + 4)
 
-  | Slt (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (slt_helper); eval t rf ram (pc + 4) instr_lst
-  | Slti (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (slt_helper); eval t rf ram (pc + 4) instr_lst
-  | Sltu (rd, rs1, rs2) :: t -> eval_sltu rd rs1 rs2 rf ram; eval t rf ram (pc + 4) instr_lst
-  | Sltiu (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (sltiu_helper); eval t rf ram (pc + 4) instr_lst
+  | Slt (rd, rs1, rs2) :: t -> eval_reg_reg rd rs1 rs2 rf ram (slt_helper); eval t rf ram (pc + 4)
+  | Slti (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (slt_helper); eval t rf ram (pc + 4)
+  | Sltu (rd, rs1, rs2) :: t -> eval_sltu rd rs1 rs2 rf ram; eval t rf ram (pc + 4)
+  | Sltiu (rd, rs1, imm) :: t -> eval_reg_imm rd rs1 imm rf ram (sltiu_helper); eval t rf ram (pc + 4)
 
-  | Label (name) :: t -> eval t rf ram (pc + 4) instr_lst
+  | Label (name) :: t -> eval t rf ram (pc + 4)
 
-  | Lw (rd, rs1, imm) :: t -> eval_lw rd rs1 imm rf ram; eval t rf ram (pc + 4) instr_lst
-  | Sw (rs1, rs2, imm) :: t -> eval_sw rs1 rs2 imm rf ram; eval t rf ram (pc + 4) instr_lst
+  | Lw (rd, rs1, imm) :: t -> eval_lw rd rs1 imm rf ram; eval t rf ram (pc + 4)
+  | Sw (rs1, rs2, imm) :: t -> eval_sw rs1 rs2 imm rf ram; eval t rf ram (pc + 4)
 
-  | Lb (rd, rs1, imm) :: t -> eval_lb rd rs1 imm rf ram; eval t rf ram (pc + 4) instr_lst
-  | Sb (rs1, rs2, imm) :: t -> eval_sb rs1 rs2 imm rf ram; eval t rf ram (pc + 4) instr_lst
-
-  | Jal (rd, label) :: t -> eval_jal rd label rf ram pc instr_lst
-  | Jalr (rd, rs1, imm) :: t -> eval_jalr rd rs1 imm rf ram pc instr_lst
-
-  | Beq (rs1, rs2, name) :: t -> eval_branch rs1 rs2 name t rf ram pc instr_lst beq
-  | Bne (rs1, rs2, name) :: t -> eval_branch rs1 rs2 name t rf ram pc instr_lst bne
-  | Blt (rs1, rs2, name) :: t -> eval_branch rs1 rs2 name t rf ram pc instr_lst blt
-  | Bge (rs1, rs2, name) :: t -> eval_branch rs1 rs2 name t rf ram pc instr_lst bge
-  | Bltu (rs1, rs2, name) :: t -> eval_branch rs1 rs2 name t rf ram pc instr_lst bltu
-  | Bgeu (rs1, rs2, name) :: t -> eval_branch rs1 rs2 name t rf ram pc instr_lst bgeu
+  | Lb (rd, rs1, imm) :: t -> eval_lb rd rs1 imm rf ram; eval t rf ram (pc + 4)
+  | Sb (rs1, rs2, imm) :: t -> eval_sb rs1 rs2 imm rf ram; eval t rf ram (pc + 4)
 
 and eval_auipc rd imm pc rf ram = 
   let a = imm lsl 12 in 
@@ -426,38 +366,6 @@ and eval_sb rs1 rs2 imm rf ram =
   let address = a + imm in 
   if address < 0 then failwith "Memory Fault : Cannot access negative address"
   else Hashtbl.add ram address s1
-
-and eval_jal rd label rf ram pc instr_lst = 
-  let () = Hashtbl.add rf rd (pc + 4) in 
-  let expr_lst' = 
-    label |> jump_to_label instr_lst |> remove_pc_from_instruction in 
-  let pc' = 
-    label |> get_label_pc instr_lst in 
-  eval expr_lst' rf ram pc' instr_lst
-
-and eval_jalr rd rs1 imm rf ram pc instr_lst = 
-  let () = Hashtbl.add rf rd (pc + 4) in 
-  let a = Hashtbl.find rf rs1 in 
-  let res = a + imm in 
-  let half_word_pc = (res / 2) * 2 in (* integer divide removes remainder part, then mult by 2 *)
-  let expr_lst' = half_word_pc |> jump_to_pc instr_lst |> remove_pc_from_instruction in 
-  let pc' = 
-    half_word_pc in 
-  eval expr_lst' rf ram pc' instr_lst
-
-and eval_branch rs1 rs2 label expr_lst rf ram pc instr_lst op = 
-  let a = Hashtbl.find rf rs1 in 
-  let b = Hashtbl.find rf rs2 in 
-  if op a b then begin
-    let expr_lst' = 
-      label |> jump_to_label instr_lst |> remove_pc_from_instruction in 
-    let pc' = 
-      label |> get_label_pc instr_lst in 
-    eval expr_lst' rf ram pc' instr_lst
-  end
-  else begin
-    eval expr_lst rf ram (pc + 4) instr_lst
-  end
 
 
 
