@@ -1,0 +1,1 @@
+let reg = Hashtbl.create 1000;

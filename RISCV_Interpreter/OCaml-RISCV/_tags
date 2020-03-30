@@ -1,0 +1,4 @@
+<eval.ml>: coverage
+<test.{byte,native}>: coverage
+true: use_menhir, thread, package(oUnit), package(str)
+<repl.*>: package(react), package(lwt), package(lambda-term)
