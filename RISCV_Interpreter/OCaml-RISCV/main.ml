@@ -180,6 +180,44 @@ let search_address ram address =
   | None -> c_ZERO_BASE_2
   | Some lst -> lst
 
+let rec add_pc_to_instruction instr_list pc acc = 
+  match instr_list with 
+  | [] -> List.rev acc 
+  | h :: t ->
+    add_pc_to_instruction t (pc + 4) ((pc, h) :: acc)
+
+let remove_pc_from_instruction pc_instr_list = 
+  List.map (fun (_, expr) -> expr) pc_instr_list
+
+let rec jump_to_label instr_list label_name = 
+  match instr_list with 
+  | [] -> failwith "The label you requested is not in the series of instructions you gave. The Jump failed. "
+  | (_, h) :: t -> begin 
+      match h with 
+      | Label name -> begin
+          if name = label_name then instr_list
+          else jump_to_label t label_name
+        end
+      | _ -> jump_to_label t label_name
+    end 
+
+let rec jump_to_pc instr_list pc = 
+  match instr_list with 
+  | [] -> failwith "The pc number you requested is not in the series of instructions you gave. The Jump failed. "
+  | (num, _) :: t -> begin 
+      if num = pc then instr_list 
+      else jump_to_pc t pc
+    end
+
+let print_registers rf = 
+  Hashtbl.iter (fun k v -> (k ^ " : " ^ string_of_int v) |> print_endline; print_newline ()) rf
+
+let mem_to_dec lst = 
+  lst |> sign_extend |> convert_to_base_10
+
+let print_memory ram = 
+  Hashtbl.iter (fun k v -> (k ^ " : " ^ string_of_int (mem_to_dec v)) |> print_endline; print_newline ()) ram
+
 let rec eval_table_a expr_lst rf ram pc =
   match expr_lst with 
   | [] -> print_endline "Finished interpretation"; ()
@@ -212,7 +250,7 @@ let rec eval_table_a expr_lst rf ram pc =
 
   | Label (name) :: t -> eval_table_a t rf ram (pc + 4)
 
-  | _ :: t -> print_endline "Not a Table A operation"; eval t rf ram (pc + 4)
+  | _ :: t -> print_endline "Not a Table A operation : Will Not Be Executed"; eval t rf ram (pc + 4)
 
 and eval expr_lst rf ram pc = 
   match expr_lst with 
