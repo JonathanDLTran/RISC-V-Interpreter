@@ -23,6 +23,7 @@ type riscv =
   | Label of string
   | Lw of string * string * int
   | Sw of string * string * int
+  | Lb of string * string * int
   | Sb of string * string * int
 
 (*
@@ -34,7 +35,6 @@ type riscv =
   | Bge of string * string * string
   | Bltu of string * string * string
   | Bgeu of string * string * string
-  | Lb of string * string * int
 *)
 
 let rec init_reg_file counter n_regs rf =
@@ -142,8 +142,11 @@ let split_32_into_4_groups lst =
   let lst4, rem4 = take_first_n rem3 [] [] 8 in 
   (lst1, lst2, lst3, lst4)
 
+(* takes in Little endian, returns base 10 *)
 let convert_to_base_10 lst = 
   List.fold_left (fun acc elt -> 2 * acc + elt) 0 (List.rev lst)
+
+let c_ZERO_BASE_2 = [0; 0; 0; 0; 0; 0; 0; 0]
 
 (** [dec_to_base_16 dec acc] converts [dec] in base 10 to
     base 16 hexadecimal in list form. 
@@ -171,6 +174,11 @@ let rec dec_to_base_16 dec acc =
     let rem = dec mod 16 in 
     if dec' = 0 then List.rev (dec :: acc) 
     else dec_to_base_16 dec' (rem :: acc)
+
+let search_address ram address = 
+  match Hashtbl.find_opt ram address with 
+  | None -> c_ZERO_BASE_2
+  | Some lst -> lst
 
 let rec eval_table_a expr_lst rf ram pc =
   match expr_lst with 
@@ -241,6 +249,7 @@ and eval expr_lst rf ram pc =
   | Lw (rd, rs1, imm) :: t -> eval_lw rd rs1 imm rf ram; eval t rf ram (pc + 4)
   | Sw (rs1, rs2, imm) :: t -> eval_sw rs1 rs2 imm rf ram; eval t rf ram (pc + 4)
 
+  | Lb (rd, rs1, imm) :: t -> eval_lb rd rs1 imm rf ram; eval t rf ram (pc + 4)
   | Sb (rs1, rs2, imm) :: t -> eval_sb rs1 rs2 imm rf ram; eval t rf ram (pc + 4)
 
 and eval_auipc rd imm pc rf ram = 
@@ -277,9 +286,15 @@ and eval_lw rd rs1 imm rf ram =
   let a = Hashtbl.find rf rs1 in 
   let address = a + imm in 
   if address < 0 then failwith "Memory Fault : Cannot access negative address"
-  else match Hashtbl.find_opt ram address with 
-    | None -> Hashtbl.add rf rd 0 (* Assume memory id zeroed out, but UB allows me to do anything *)
-    | Some lst -> failwith "Unimplemented"
+  else begin
+    let s1 = search_address ram address in 
+    let s2 = search_address ram (address + 1) in 
+    let s3 = search_address ram (address + 2) in 
+    let s4 = search_address ram (address + 3) in 
+    let list_32 = s1 @ s2 @ s3 @ s4 in 
+    let dec = convert_to_base_10 list_32 in 
+    Hashtbl.add rf rd dec
+  end
 
 and eval_lb rd rs1 imm rf ram = 
   let a = Hashtbl.find rf rs1 in 
