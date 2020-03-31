@@ -34,7 +34,6 @@ type riscv =
   | Bltu of string * string * string
   | Bgeu of string * string * string
 
-
 (* ####### INPUT OUTPUT FROM FILE ######### *)
 
 let c_QUIT = "quit"
@@ -57,17 +56,205 @@ let read_lines_in_file ic =
     | line -> read_lines_helper ic (line :: acc)
   in read_lines_helper ic []
 
-let read_file_main () = 
+let main_read_file () = 
   () |> get_file |> read_lines_in_file
 
 (* ########## FRONT END PARSE ######### *)
 
+let c_SPACES_OR_EMPTY = [""; " "; "\n"; "\t"; "\r"]
 
+let c_COMMENT = '#'
 
+let c_SPACE = ' '
 
+let c_COMMA = ','
 
-let main_parse = 
-  failwith "Unimplemented"
+let c_COLON = ':'
+
+let c_REG_IMM = ["addi"; "andi"; "ori"; "xori"; "slti"; "sltiu"; "slli"; "srai"; "srli"]
+
+let c_REG_REG = ["add"; "sub"; "and"; "or"; "xor"; "slt"; "sltu"; "srl"; "sll"; "sra"]
+
+let c_BRANCH = ["beq"; "bne"; "bge"; "bgeu"; "blt"; "bltu"]
+
+let rec init_regs counter n_regs acc =
+  if counter = n_regs then acc
+  else
+    init_regs (counter + 1) n_regs (("x" ^ (string_of_int counter)) :: acc)
+
+let c_REGISTERS = 
+  init_regs 0 32 []
+
+let remove_comments str = 
+  match String.index str c_COMMENT with 
+  | exception e -> str 
+  | i -> begin (* i is an index of #, that could be at 0 *)
+      String.sub str 0 (i - 1) (* i - 1 to avoid # symbol at i *)
+    end
+
+let replace_commas str = 
+  String.map (fun c -> if c = c_COMMA then c_SPACE else c) str
+
+let clean_strings str_lst = 
+  str_lst 
+  |> List.map remove_comments (* all comments gone *)
+  |> List.map (String.lowercase_ascii) (* all to lowercase *)
+  |> List.map (String.trim) (* remove spaces in each string *)
+  |> List.filter (fun s -> List.mem s c_SPACES_OR_EMPTY) (* any emoty string or spaces only string removed *)
+  |> List.map (String.split_on_char c_SPACE) (* each remianing string is turned into a list with subelements now *)
+  |> List.map (fun lst -> List.map replace_commas lst) (* turn commas into spaces *)
+  |> List.map (fun lst -> List.map String.trim lst) (* remove spaces where commas were *)
+
+let check_imm h imm = 
+  match int_of_string imm with 
+  | exception e -> failwith ("Parse Error : Immediate not an integer : " ^ imm)
+  | i -> begin 
+      if h = "slli" || h = "srli" || h = "srai" then begin
+        if i > 31 || i < 0 
+        then 
+          failwith ("Immediate Error : Shift immediates must be between 0 and 31 : " ^ string_of_int i)
+        else i
+      end
+      else if h = "addi" || h = "andi" || h = "ori" || h = "xori" || h = "slti" || h = "sltiu" then begin
+        if i >= 1024 || i < -1024 
+        then failwith ("Immediate Error : Reg Imm immediates must be between -1024 and 1023 : " ^ string_of_int i)
+        else i
+      end
+      else if h = "auipc" || h = "lui" then begin
+        if i > 1048575 || i < -1048576 
+        then failwith ("Immediate Error : AUIPC/LUI immediates must be between -1048576 and 1048575 : " ^ string_of_int i)
+        else i
+      end
+      else i (* for JALR immediate *)
+    end
+
+let check_reg reg = 
+  if List.mem reg c_REGISTERS then reg 
+  else failwith ("Parse Error : Register not recognized : " ^ reg)
+
+let choose_op_reg_imm h rd rs1 imm = 
+  if h = "addi" then Addi (rd, rs1, imm)
+  else if h = "andi" then Andi (rd, rs1, imm)
+  else if h = "ori" then Ori (rd, rs1, imm)
+  else if h = "xori" then Xori (rd, rs1, imm)
+  else if h = "slti" then Slti (rd, rs1, imm)
+  else if h = "sltiu" then Sltiu (rd, rs1, imm)
+  else if h = "slli" then Slli (rd, rs1, imm)
+  else if h = "srli" then Srli (rd, rs1, imm)
+  else if h = "srai" then Srai (rd, rs1, imm)
+  else failwith ("Opcode Error : " ^ h)
+
+let match_reg_imm h t = 
+  match t with 
+  | [] -> failwith "Parse Error : No args specified"
+  | rd :: rs1 :: imm :: [] -> 
+    let rd' = check_reg rd in 
+    let rs1' = check_reg rs1 in 
+    let imm' = check_imm h imm in 
+    choose_op_reg_imm h rd' rs1' imm'
+  | rd :: rs1 :: imm :: t -> failwith "Parse Error : Too many args"
+  | _ -> failwith "Parse Error : Too few args"
+
+let choose_op_reg_reg h rd rs1 rs2 = 
+  if h = "add" then Add (rd, rs1, rs2)
+  else if h = "and" then And (rd, rs1, rs2)
+  else if h = "or" then Or (rd, rs1, rs2)
+  else if h = "xor" then Xor (rd, rs1, rs2)
+  else if h = "slt" then Slt (rd, rs1, rs2)
+  else if h = "sltu" then Sltu (rd, rs1, rs2)
+  else if h = "sll" then Sll (rd, rs1, rs2)
+  else if h = "srl" then Srl (rd, rs1, rs2)
+  else if h = "sra" then Sra (rd, rs1, rs2)
+  else if h = "sub" then Sub (rd, rs1, rs2)
+  else failwith ("Opcode Error : " ^ h)
+
+let match_reg_reg h t = 
+  match t with 
+  | [] -> failwith "Parse Error : No args specified"
+  | rd :: rs1 :: rs2 :: [] ->
+    let rd' = check_reg rd in 
+    let rs1' = check_reg rs1 in 
+    let rs2' = check_reg rs2 in 
+    choose_op_reg_reg h rd' rs1' rs2'
+  | rd :: rs1 :: imm :: t -> failwith "Parse Error : Too many args"
+  | _ -> failwith "Parse Error : Too few args"
+
+let match_label h = 
+  if String.get h (String.length h - 1) = c_COLON(* last character of label must be colon *)
+  then begin
+    (* must remove colon so that jumps and branches can work by comparing strings directly *)
+    let removed_colon_str = String.sub h 0 (String.length h - 1) in 
+    Label (removed_colon_str)
+  end
+  else failwith ("Parse Error : label must end in colon : " ^ h)
+
+let match_auipc h1 h2 h3 = 
+  let rd' = check_reg h2 in 
+  let imm' = check_imm h1 h3 in 
+  Auipc (rd', imm')
+
+let match_lui h1 h2 h3 = 
+  let rd' = check_reg h2 in 
+  let imm' = check_imm h1 h3 in 
+  Lui (rd', imm')
+
+let check_label label = 
+  if String.contains label c_COLON then failwith ("Parse Error : Label cannot have colon : " ^ label)
+  else label
+
+let choose_op_branch h rs1 rs2 label = 
+  if h = "beq" then Beq (rs1, rs2, label)
+  else if h = "bne" then Bne (rs1, rs2, label)
+  else if h = "bge" then Bge (rs1, rs2, label)
+  else if h = "bgeu" then Bgeu (rs1, rs2, label)
+  else if h = "blt" then Blt (rs1, rs2, label)
+  else if h = "bltu" then Bltu (rs1, rs2, label)
+  else failwith ("Opcode Error : " ^ h)
+
+let match_branch h t = 
+  match t with 
+  | [] -> failwith "Parse Error : No args specified"
+  | rs1 :: rs2 :: label :: [] ->
+    let rs1' = check_reg rs1 in 
+    let rs2' = check_reg rs2 in 
+    let label' = check_label label in
+    choose_op_branch h rs1' rs2' label'
+  | rd :: rs1 :: imm :: t -> failwith "Parse Error : Too many args"
+  | _ -> failwith "Parse Error : Too few args"
+
+let match_jal h1 h2 h3 = 
+  let rd' = check_reg h2 in 
+  let label' = check_label h3 in 
+  Jal (rd', label')
+
+let convert_string_lst_to_riscv str_lst = 
+  match str_lst with 
+  | [] -> failwith "Parse Error : No op or args specified"
+  | h :: [] -> match_label h
+  | h1 :: h2 :: h3 :: [] -> begin
+      if h1 = "auipc" then match_auipc h1 h2 h3
+      else if h1 = "lui" then match_lui h1 h2 h3
+      else if h1 = "jal" then match_jal h1 h2 h3
+      else failwith ("Parse Error : Unsupported Op " ^ h1)
+    end
+  | h :: t -> begin 
+      if List.mem h c_REG_IMM then match_reg_imm h t
+      else if List.mem h c_REG_REG then match_reg_reg h t
+      else if List.mem h c_BRANCH then match_branch h t
+      else failwith ("Parse Error : Unsupported Op " ^ h)
+    end
+
+let rec parse acc cleaned_str_lst  = 
+  match cleaned_str_lst with 
+  | [] -> List.rev acc 
+  | inner_str_lst :: t -> begin
+      parse (convert_string_lst_to_riscv inner_str_lst :: acc) t
+    end 
+
+let main_parse str_lst = 
+  str_lst 
+  |> clean_strings
+  |> parse []
 
 (* ######### BACK END EVALUATION ############# *)
 
@@ -496,15 +683,21 @@ and eval_branch rs1 rs2 label expr_lst rf ram pc instr_lst op =
     eval expr_lst rf ram (pc + 4) instr_lst
   end
 
-let main_eval expr_lst table_a_only = 
+let main_eval expr_lst = 
+  let () = print_endline "Do you want only Table A instructions to be executed?" in 
+  let res = () |> read_line |> String.lowercase_ascii |> String.trim in 
+  let table_a_only = res = "yes" || res = "true" in
   let instr_lst = add_pc_to_instruction expr_lst 0 [] in
   let pc = 0 in 
   if table_a_only then eval_table_a expr_lst reg_file ram pc instr_lst 
   else eval expr_lst reg_file ram pc instr_lst
 
-
-
-
+(* ######### MAIN PROGRAM ######### *)
+let main = 
+  ()
+  |> main_read_file
+  |> main_parse
+  |> main_eval
 
 
 
