@@ -77,6 +77,10 @@ let c_REG_REG = ["add"; "sub"; "and"; "or"; "xor"; "slt"; "sltu"; "srl"; "sll"; 
 
 let c_BRANCH = ["beq"; "bne"; "bge"; "bgeu"; "blt"; "bltu"]
 
+let c_STORE = ["sw"; "sb"]
+
+let c_LOAD = ["lw"; "lb"]
+
 let rec init_regs counter n_regs acc =
   if counter = n_regs then acc
   else
@@ -227,6 +231,47 @@ let match_jal h1 h2 h3 =
   let label' = check_label h3 in 
   Jal (rd', label')
 
+let parse_imm_reg_combo imm_reg = 
+  let open_paren_idx = 
+    match String.index_opt imm_reg '(' with 
+    | None -> failwith "Parse Error : A JALR address, or a load and a store are formatted as 'offset(reg)' "
+    | Some idx -> idx in 
+  let close_paren_idx =   
+    match String.index_opt imm_reg ')' with 
+    | None -> failwith "Parse Error : A JALR address, or a load and a store are formatted as 'offset(reg)' "
+    | Some idx -> idx in 
+  if open_paren_idx >= close_paren_idx then failwith "Parse Error : A JALR address, or a load and a store are formatted as 'offset(reg)' "
+  else 
+    let num_elts = close_paren_idx + 1 - open_paren_idx in 
+    let in_between_parens = 
+      String.sub imm_reg (open_paren_idx + 1) num_elts in 
+    let before_parens = 
+      String.sub imm_reg 0 open_paren_idx in 
+    let after_parens = 
+      String.sub imm_reg (close_paren_idx + 1) (String.length - (close_paren_idx + 1)) in 
+    if after_parens <> "" then failwith "Parse Error : Nothing can be after the offset(register) "
+    else 
+      let reg = check_reg in_between_parens in 
+      let imm = check_imm "load_store_jalr" before_parens in 
+      (reg, imm)
+
+let match_jalr h1 h2 h3 = 
+  let rd' = check_reg h2 in 
+  let (reg, imm) = parse_imm_reg_combo h3 in 
+  Jalr (rd', reg, imm)
+
+let match_load h1 h2 h3 = 
+  let rd' = check_reg h2 in 
+  let (reg, imm) = parse_imm_reg_combo h3 in 
+  if h1 = "lw" then Lw (rd', reg, imm)
+  else Lb (rd', reg, imm)
+
+let match_store h1 h2 h3 = 
+  let rs2' = check_reg h2 in 
+  let (reg, imm) = parse_imm_reg_combo h3 in 
+  if h1 = "sw" then Sw (rs2', reg, imm)
+  else Sb (rs2', reg, imm)
+
 let convert_string_lst_to_riscv str_lst = 
   match str_lst with 
   | [] -> failwith "Parse Error : No op or args specified"
@@ -235,6 +280,9 @@ let convert_string_lst_to_riscv str_lst =
       if h1 = "auipc" then match_auipc h1 h2 h3
       else if h1 = "lui" then match_lui h1 h2 h3
       else if h1 = "jal" then match_jal h1 h2 h3
+      else if h1 = "jalr" then match_jalr h1 h2 h3
+      else if List.mem h1 c_LOAD then match_load h1 h2 h3
+      else if List.mem h1 c_STORE then match_store h1 h2 h3
       else failwith ("Parse Error : Unsupported Op " ^ h1)
     end
   | h :: t -> begin 
