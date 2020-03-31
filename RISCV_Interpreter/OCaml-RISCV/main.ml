@@ -37,7 +37,31 @@ type riscv =
 
 (* ####### INPUT OUTPUT FROM FILE ######### *)
 
+let c_QUIT = "quit"
+
+let rec get_file () = 
+  let () = 
+    print_endline "Please give the address to the file you want to parse : " in 
+  let file_name = read_line () in 
+  if String.lowercase_ascii file_name = c_QUIT then exit 0 
+  else match open_in file_name with 
+    | exception e -> 
+      print_endline "The file address you requested does not exist. Try again. ";
+      get_file ()
+    | ic -> ic
+
+let read_lines_in_file ic = 
+  let rec read_lines_helper ic acc = 
+    match input_line ic with 
+    | exception e -> close_in ic; List.rev acc
+    | line -> read_lines_helper ic (line :: acc)
+  in read_lines_helper ic []
+
+let read_file_main () = 
+  () |> get_file |> read_lines_in_file
+
 (* ########## FRONT END PARSE ######### *)
+
 
 
 
